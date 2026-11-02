@@ -105,10 +105,6 @@ impl State {
         }
         prefs.retain(|_, p| *p != LinkPrefs::default());
         links::write_prefs(&prefs);
-        drop(prefs);
-        if self.combine.is_active() {
-            self.schedule_apply(Duration::from_secs(1));
-        }
     }
 
     fn schedule_apply(self: &Rc<Self>, delay: Duration) {
@@ -134,7 +130,7 @@ impl State {
         let state = self.clone();
         let config = self.config();
         glib::spawn_future_local(async move {
-            let result = save(config).await;
+            let result = helper("save", config).await;
             state.saving.set(false);
             if let Err(e) = result {
                 state.toasts.add_toast(adw::Toast::new(&e));
@@ -181,7 +177,7 @@ impl State {
         }
         let (state, app) = (self.clone(), app.clone());
         glib::spawn_future_local(async move {
-            match save(String::new()).await {
+            match helper("save", String::new()).await {
                 Ok(()) => app.quit(),
                 Err(e) => {
                     state.toasts.add_toast(adw::Toast::new(&format!("Could not stop combining: {e}")));
@@ -238,8 +234,12 @@ fn build_ui(app: &adw::Application) {
         .menu_model(&menu)
         .tooltip_text("Main Menu")
         .build();
+    let apply = gtk::Button::builder().label("Apply").tooltip_text("Apply connection changes").build();
+    apply.add_css_class("suggested-action");
+    combine.bind_property("active", &apply, "sensitive").sync_create().build();
     let header = adw::HeaderBar::new();
     header.pack_end(&menu_button);
+    header.pack_end(&apply);
 
     let view = adw::ToolbarView::new();
     view.add_top_bar(&header);
@@ -259,6 +259,8 @@ fn build_ui(app: &adw::Application) {
         quiet: Cell::new(false),
     });
 
+    let s = state.clone();
+    apply.connect_clicked(move |_| s.schedule_apply(Duration::ZERO));
     let s = state.clone();
     state.combine.connect_active_notify(move |_| s.combine_changed());
     for r in &state.rows {
@@ -364,8 +366,36 @@ fn show_preferences(win: &adw::ApplicationWindow, state: &Rc<State>) {
         names.add(&entry);
     }
 
-    let permission = adw::PreferencesGroup::builder().title("Permission").build();
-    permission.add(&adw::ActionRow::builder().title("Administrator access").subtitle(permission_status()).build());
+    let (status, can_grant) = permission_status();
+    let permission = adw::ActionRow::builder().title("Permissions").subtitle(status).build();
+    let grant = gtk::Button::builder().label("Grant").valign(gtk::Align::Center).visible(can_grant).build();
+    permission.add_suffix(&grant);
+    permission.set_activatable_widget(Some(&grant));
+    grant.connect_clicked(glib::clone!(
+        #[weak]
+        permission,
+        move |grant| {
+            grant.set_sensitive(false);
+            glib::spawn_future_local(glib::clone!(
+                #[weak]
+                permission,
+                #[weak]
+                grant,
+                async move {
+                    match helper("grant", String::new()).await {
+                        Ok(()) => {
+                            permission.set_subtitle(GRANTED);
+                            grant.set_visible(false);
+                        }
+                        Err(e) => permission.set_subtitle(&e),
+                    }
+                    grant.set_sensitive(true);
+                }
+            ));
+        }
+    ));
+    let permission_group = adw::PreferencesGroup::new();
+    permission_group.add(&permission);
 
     let reset = adw::ButtonRow::builder().title("Reset All").build();
     reset.add_css_class("destructive-action");
@@ -401,24 +431,29 @@ fn show_preferences(win: &adw::ApplicationWindow, state: &Rc<State>) {
 
     let page = adw::PreferencesPage::new();
     page.add(&names);
-    page.add(&permission);
+    page.add(&permission_group);
     page.add(&reset_group);
     dialog.add(&page);
+    // Without this the dialog focuses, and selects, the first name field.
+    dialog.set_focus(Some(&permission));
     dialog.present(Some(win));
 }
 
-fn permission_status() -> &'static str {
+const GRANTED: &str = "Granted, changes apply without a password";
+
+/// Status text, and whether the Grant button can help.
+fn permission_status() -> (&'static str, bool) {
     if !std::path::Path::new(HELPER).exists() {
-        return "Helper not installed, reinstall the package";
+        return ("Helper not installed, reinstall the package", false);
     }
     let pid = std::process::id().to_string();
     let check = std::process::Command::new("pkcheck")
         .args(["--action-id", "dev.neddy.Interweave.apply", "--process", &pid])
         .output();
     match check.map(|out| out.status.code()) {
-        Ok(Some(0)) => "Granted, your password is remembered for a few minutes",
-        Ok(Some(1)) => "Not allowed for this user",
-        _ => "Asks for your password when settings change",
+        Ok(Some(0)) => (GRANTED, false),
+        Ok(Some(1)) => ("Not allowed for this user", false),
+        _ => ("Asks for your password on every change, grant it once to stop that", true),
     }
 }
 
@@ -452,13 +487,13 @@ fn show_about(win: &adw::ApplicationWindow) {
     about.present(Some(win));
 }
 
-async fn save(config: String) -> Result<(), String> {
+async fn helper(command: &str, input: String) -> Result<(), String> {
     let proc = gio::Subprocess::newv(
-        &["pkexec".as_ref(), HELPER.as_ref(), "save".as_ref()],
+        &["pkexec".as_ref(), HELPER.as_ref(), command.as_ref()],
         gio::SubprocessFlags::STDIN_PIPE | gio::SubprocessFlags::STDERR_PIPE,
     )
     .map_err(|e| e.to_string())?;
-    let (_, stderr) = proc.communicate_utf8_future(Some(config)).await.map_err(|e| e.to_string())?;
+    let (_, stderr) = proc.communicate_utf8_future(Some(input)).await.map_err(|e| e.to_string())?;
     if proc.is_successful() {
         Ok(())
     } else {

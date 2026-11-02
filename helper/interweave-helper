@@ -1,9 +1,11 @@
 #!/bin/bash
-# Root side of Interweave. Usage: interweave-helper save|apply|reset
+# Root side of Interweave. Usage: interweave-helper save|apply|reset|grant
 # save: read new config from stdin, validate, store, apply. apply: (re)apply stored config.
+# grant: let the pkexec caller run this helper without a password from now on.
 set -euo pipefail
 
 CONF=${INTERWEAVE_CONF:-/etc/interweave/links.conf}
+RULES_DIR=${INTERWEAVE_RULES_DIR:-/etc/polkit-1/rules.d}
 METRIC=10
 IFB_PREFIX=ifbiw
 
@@ -29,6 +31,7 @@ links() { grep -Ev '^\s*(#|$)' "$CONF" 2>/dev/null || true; }
 
 reset() {
     try ip route del default metric "$METRIC"
+    try ip -6 route del unreachable default metric "$METRIC"
     local dev rest ifb
     while read -r dev rest; do
         try tc qdisc del dev "$dev" root
@@ -65,6 +68,9 @@ apply() {
     if ((count >= 2)); then
         run sysctl -qw net.ipv4.fib_multipath_hash_policy=1
         run ip route replace default metric "$METRIC" "${nexthops[@]}"
+        # IPv6 is not balanced and would carry everything it can over one link, so apps fall back to IPv4.
+        # shortcut: no IPv6 while combining, add an IPv6 multipath route if all links ever have one
+        run ip -6 route replace unreachable default metric "$METRIC"
     fi
 }
 
@@ -74,6 +80,23 @@ locked() {
         flock 9
     fi
     "$@"
+}
+
+grant() {
+    [[ -n ${PKEXEC_UID:-} ]] || die "grant must run through pkexec"
+    local user rule
+    user=$(id -nu "$PKEXEC_UID") || die "unknown user $PKEXEC_UID"
+    [[ $user =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]*$ ]] || die "bad user name: $user"
+    rule=$RULES_DIR/50-interweave-$user.rules
+    cat >"$rule.tmp" <<RULE
+polkit.addRule(function(action, subject) {
+    if (action.id == "dev.neddy.Interweave.apply" && subject.user == "$user" && subject.local && subject.active) {
+        return polkit.Result.YES;
+    }
+});
+RULE
+    chmod 644 "$rule.tmp"
+    mv "$rule.tmp" "$rule"
 }
 
 save() {
@@ -86,9 +109,11 @@ save() {
     chmod 644 "$CONF.tmp"
     mv "$CONF.tmp" "$CONF"
     apply
+    # The password asked for this save is the last one.
+    if [[ -n ${PKEXEC_UID:-} ]]; then grant; fi
 }
 
 case ${1:-} in
-    save | apply | reset) locked "$1" ;;
-    *) die "usage: interweave-helper save|apply|reset" ;;
+    save | apply | reset | grant) locked "$1" ;;
+    *) die "usage: interweave-helper save|apply|reset|grant" ;;
 esac

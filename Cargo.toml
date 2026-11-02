@@ -1,6 +1,6 @@
 [package]
 name = "interweave"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 license = "Apache-2.0"
 description = "Combine and limit multiple internet connections into one"
@@ -21,7 +21,7 @@ assets = [
     { source = "data/dev.neddy.Interweave-symbolic.svg", dest = "/usr/share/icons/hicolor/symbolic/apps/dev.neddy.Interweave-symbolic.svg", mode = "644" },
 ]
 auto-req = "no"
-pre_uninstall_script = "[ $1 -eq 0 ] && /usr/libexec/interweave/interweave-helper reset || :"
+pre_uninstall_script = "[ $1 -eq 0 ] && { /usr/libexec/interweave/interweave-helper reset; rm -f /etc/polkit-1/rules.d/50-interweave-*.rules; } || :"
 
 [package.metadata.generate-rpm.requires]
 NetworkManager = "*"

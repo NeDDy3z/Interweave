@@ -43,7 +43,8 @@ tc qdisc replace dev wlan0 handle ffff: ingress
 tc filter replace dev wlan0 parent ffff: protocol all matchall action mirred egress redirect dev ifbiw1
 tc qdisc replace dev ifbiw1 root cake bandwidth 50mbit ingress
 sysctl -qw net.ipv4.fib_multipath_hash_policy=1
-ip route replace default metric 10 nexthop via 192.168.1.1 dev eth0 weight 2 nexthop via 10.0.0.1 dev wlan0 weight 1"
+ip route replace default metric 10 nexthop via 192.168.1.1 dev eth0 weight 2 nexthop via 10.0.0.1 dev wlan0 weight 1
+ip -6 route replace unreachable default metric 10"
 
 expect_ok "offline link is skipped, no multipath with one link" "eth0 1 0 0
 usb0 1 0 0" ""
@@ -61,5 +62,19 @@ expect_reject "weight too big" "eth0 257 0 0"
 expect_reject "missing field" "eth0 1 0"
 expect_reject "extra field" "eth0 1 0 0 0"
 expect_reject "negative cap" "eth0 1 -5 0"
+
+mkdir "$tmp/rules"
+me=$(id -nu)
+if PKEXEC_UID=$(id -u) INTERWEAVE_RULES_DIR=$tmp/rules "$helper" grant \
+    && grep -q "subject.user == \"$me\"" "$tmp/rules/50-interweave-$me.rules"; then
+    echo "ok   grant writes a rule for the caller"
+else
+    echo "FAIL grant writes a rule for the caller"; fails=$((fails + 1))
+fi
+if "$helper" grant 2>/dev/null; then
+    echo "FAIL grant without pkexec (accepted)"; fails=$((fails + 1))
+else
+    echo "ok   grant without pkexec"
+fi
 
 ((fails == 0)) && echo "all passed" || { echo "$fails failed"; exit 1; }
