@@ -1,12 +1,13 @@
 [package]
 name = "interweave"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "Apache-2.0"
 description = "Combine and limit multiple internet connections into one"
 
 [dependencies]
 adw = { package = "libadwaita", version = "0.9", features = ["v1_6"] }
+ksni = { version = "0.3", default-features = false, features = ["blocking", "async-io"] }
 
 [package.metadata.generate-rpm]
 assets = [
@@ -17,6 +18,7 @@ assets = [
     { source = "data/dev.neddy.Interweave.metainfo.xml", dest = "/usr/share/metainfo/dev.neddy.Interweave.metainfo.xml", mode = "644" },
     { source = "data/dev.neddy.Interweave.policy", dest = "/usr/share/polkit-1/actions/dev.neddy.Interweave.policy", mode = "644" },
     { source = "data/dev.neddy.Interweave.svg", dest = "/usr/share/icons/hicolor/scalable/apps/dev.neddy.Interweave.svg", mode = "644" },
+    { source = "data/dev.neddy.Interweave-symbolic.svg", dest = "/usr/share/icons/hicolor/symbolic/apps/dev.neddy.Interweave-symbolic.svg", mode = "644" },
 ]
 auto-req = "no"
 pre_uninstall_script = "[ $1 -eq 0 ] && /usr/libexec/interweave/interweave-helper reset || :"
@@ -26,4 +28,5 @@ NetworkManager = "*"
 iproute = "*"
 iproute-tc = "*"
 polkit = "*"
+curl = "*"
 libadwaita = ">= 1.6"
