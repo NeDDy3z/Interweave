@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Interweave
+Comment=Combine and limit multiple internet connections
+Exec=interweave
+Icon=dev.neddy.Interweave
+Terminal=false
+Type=Application
+Categories=GTK;GNOME;Network;
+Keywords=bond;multipath;bandwidth;limit;steam;
+StartupNotify=true

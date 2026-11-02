@@ -1,0 +1,29 @@
+[package]
+name = "interweave"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Combine and limit multiple internet connections into one"
+
+[dependencies]
+adw = { package = "libadwaita", version = "0.9", features = ["v1_6"] }
+
+[package.metadata.generate-rpm]
+assets = [
+    { source = "target/release/interweave", dest = "/usr/bin/interweave", mode = "755" },
+    { source = "helper/interweave-helper", dest = "/usr/libexec/interweave/interweave-helper", mode = "755" },
+    { source = "helper/90-interweave", dest = "/usr/lib/NetworkManager/dispatcher.d/90-interweave", mode = "755" },
+    { source = "data/dev.neddy.Interweave.desktop", dest = "/usr/share/applications/dev.neddy.Interweave.desktop", mode = "644" },
+    { source = "data/dev.neddy.Interweave.metainfo.xml", dest = "/usr/share/metainfo/dev.neddy.Interweave.metainfo.xml", mode = "644" },
+    { source = "data/dev.neddy.Interweave.policy", dest = "/usr/share/polkit-1/actions/dev.neddy.Interweave.policy", mode = "644" },
+    { source = "data/dev.neddy.Interweave.svg", dest = "/usr/share/icons/hicolor/scalable/apps/dev.neddy.Interweave.svg", mode = "644" },
+]
+auto-req = "no"
+pre_uninstall_script = "[ $1 -eq 0 ] && /usr/libexec/interweave/interweave-helper reset || :"
+
+[package.metadata.generate-rpm.requires]
+NetworkManager = "*"
+iproute = "*"
+iproute-tc = "*"
+polkit = "*"
+libadwaita = ">= 1.6"

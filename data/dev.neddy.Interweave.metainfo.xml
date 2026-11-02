@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>dev.neddy.Interweave</id>
+  <name>Interweave</name>
+  <summary>Combine and limit multiple internet connections</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>Apache-2.0</project_license>
+  <description>
+    <p>Spread downloads over several internet connections at once, and cap download and upload speed per connection.</p>
+  </description>
+  <launchable type="desktop-id">dev.neddy.Interweave.desktop</launchable>
+  <url type="homepage">https://github.com/NeDDy3z/Interweave</url>
+</component>

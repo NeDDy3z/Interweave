@@ -1,0 +1,94 @@
+#!/bin/bash
+# Root side of Interweave. Usage: interweave-helper save|apply|reset
+# save: read new config from stdin, validate, store, apply. apply: (re)apply stored config.
+set -euo pipefail
+
+CONF=${INTERWEAVE_CONF:-/etc/interweave/links.conf}
+METRIC=10
+IFB_PREFIX=ifbiw
+
+run() { if [[ -n ${DRY_RUN:-} ]]; then echo "$*"; else "$@"; fi; }
+try() { run "$@" 2>/dev/null || true; }
+die() { echo "interweave-helper: $*" >&2; exit 1; }
+
+validate() {
+    local n=0 dev weight down up extra
+    while read -r dev weight down up extra; do
+        [[ -z $dev || $dev == \#* ]] && continue
+        [[ -z ${extra:-} ]] || die "too many fields for $dev"
+        [[ $dev =~ ^[A-Za-z0-9_.-]{1,15}$ ]] || die "bad device name: $dev"
+        [[ $weight =~ ^[0-9]+$ ]] && ((weight >= 1 && weight <= 256)) || die "$dev: weight must be 1-256"
+        [[ $down =~ ^[0-9]+$ ]] && ((down <= 100000)) || die "$dev: down must be 0-100000 Mbit/s"
+        [[ $up =~ ^[0-9]+$ ]] && ((up <= 100000)) || die "$dev: up must be 0-100000 Mbit/s"
+        n=$((n + 1))
+    done
+    ((n <= 16)) || die "at most 16 links"
+}
+
+links() { grep -Ev '^\s*(#|$)' "$CONF" 2>/dev/null || true; }
+
+reset() {
+    try ip route del default metric "$METRIC"
+    local dev rest ifb
+    while read -r dev rest; do
+        try tc qdisc del dev "$dev" root
+        try tc qdisc del dev "$dev" ingress
+    done < <(links)
+    for ifb in $(ip -o link show type ifb 2>/dev/null | awk -F': ' '{print $2}' | grep "^$IFB_PREFIX" || true); do
+        try ip link del "$ifb"
+    done
+    # shortcut: assumes the Fedora default of 0, store the old value if anyone needs another one
+    try sysctl -qw net.ipv4.fib_multipath_hash_policy=0
+}
+
+apply() {
+    reset
+    local i=0 dev weight down up gw ifb nexthops=() count=0
+    while read -r dev weight down up; do
+        ifb=$IFB_PREFIX$i
+        i=$((i + 1))
+        gw=$(nmcli -g IP4.GATEWAY device show "$dev" 2>/dev/null | head -n1) || true
+        [[ -n $gw ]] || continue
+        nexthops+=(nexthop via "$gw" dev "$dev" weight "$weight")
+        count=$((count + 1))
+        if ((up > 0)); then
+            run tc qdisc replace dev "$dev" root cake bandwidth "${up}mbit"
+        fi
+        if ((down > 0)); then
+            run ip link add "$ifb" type ifb
+            run ip link set "$ifb" up
+            run tc qdisc replace dev "$dev" handle ffff: ingress
+            run tc filter replace dev "$dev" parent ffff: protocol all matchall action mirred egress redirect dev "$ifb"
+            run tc qdisc replace dev "$ifb" root cake bandwidth "${down}mbit" ingress
+        fi
+    done < <(links)
+    if ((count >= 2)); then
+        run sysctl -qw net.ipv4.fib_multipath_hash_policy=1
+        run ip route replace default metric "$METRIC" "${nexthops[@]}"
+    fi
+}
+
+locked() {
+    if [[ -z ${DRY_RUN:-} ]]; then
+        exec 9>/run/interweave.lock
+        flock 9
+    fi
+    "$@"
+}
+
+save() {
+    local new
+    new=$(cat)
+    validate <<<"$new"
+    reset
+    install -d -m 755 "$(dirname "$CONF")"
+    printf '%s\n' "$new" >"$CONF.tmp"
+    chmod 644 "$CONF.tmp"
+    mv "$CONF.tmp" "$CONF"
+    apply
+}
+
+case ${1:-} in
+    save | apply | reset) locked "$1" ;;
+    *) die "usage: interweave-helper save|apply|reset" ;;
+esac

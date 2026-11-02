@@ -1,0 +1,8 @@
+#!/bin/bash
+# NetworkManager dispatcher hook: re-apply Interweave when a configured link changes.
+case $2 in up | down | dhcp4-change) ;; *) exit 0 ;; esac
+conf=/etc/interweave/links.conf
+[[ -n $1 && -f $conf ]] || exit 0
+# Only react to our own links, so the ifb devices we create never trigger a loop.
+awk -v d="$1" '$1 == d { found = 1 } END { exit !found }' "$conf" || exit 0
+exec /usr/libexec/interweave/interweave-helper apply
